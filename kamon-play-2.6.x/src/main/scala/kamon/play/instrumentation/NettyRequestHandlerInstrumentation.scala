@@ -35,33 +35,28 @@ class NettyRequestHandlerInstrumentation {
   @Around("execution(* play.core.server.netty.PlayRequestHandler.handle(..)) && args(*, request)")
   def onHandle(pjp: ProceedingJoinPoint, request: HttpRequest): Any = {
     val incomingContext = instrumentationNetty.decodeContext(request)
-    val serverSpan = Kamon.buildSpan("unknown-operation")
+    val serverSpan = Kamon.buildSpan("http-request")
       .asChildOf(incomingContext.get(Span.ContextKey))
-      .withMetricTag("span.kind", "server")
+      .withTag("span.kind", "server")
       .withTag("component", "play.server.netty")
       .withTag("http.method", request.method().name())
       .withTag("http.url", request.uri())
       .start()
 
-    val responseFuture = Kamon.withContext(Context.create(Span.ContextKey, serverSpan)) {
+    Kamon.withContext(Context.create(Span.ContextKey, serverSpan)) {
       pjp.proceed().asInstanceOf[Future[HttpResponse]]
-    }
-
-    responseFuture.transform(
-      s = response => {
+    }.transform(
+      response => {
         val responseStatus = response.status()
-        serverSpan.tag("http.status_code", responseStatus.code())
+        serverSpan.tagMetric("http.status_code", responseStatus.code().toString)
 
-        if(isError(responseStatus.code))
+        if(instrumentationNetty.isError(responseStatus.code))
           serverSpan.addError(responseStatus.reasonPhrase())
-
-        if(responseStatus.code == StatusCodes.NotFound)
-          serverSpan.setOperationName("not-found")
 
         serverSpan.finish()
         response
       },
-      f = error => {
+      error => {
         serverSpan.addError("error.object", error)
         serverSpan.finish()
         error

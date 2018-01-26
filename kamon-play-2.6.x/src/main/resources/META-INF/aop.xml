@@ -11,5 +11,6 @@
         <include within="kamon.play.instrumentation..*"/>
         <include within="play.api..*"/>
         <include within="play.core.server..*"/>
+        <include within="play.core.server.netty..*"/>
    </weaver>
 </aspectj>

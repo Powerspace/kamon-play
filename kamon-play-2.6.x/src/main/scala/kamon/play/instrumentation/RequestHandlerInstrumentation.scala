@@ -18,7 +18,7 @@ package kamon.play.instrumentation
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
 import kamon.Kamon
 import kamon.context.Context
-import kamon.play.OperationNameFilter
+import kamon.play.{OperationNameFilter, instrumentation}
 import kamon.trace.Span
 import kamon.util.CallingThreadExecutionContext
 import org.aspectj.lang.ProceedingJoinPoint
@@ -52,7 +52,7 @@ class RequestHandlerInstrumentation {
         val responseStatus = response.status
         serverSpan.tag("http.status_code", responseStatus.intValue())
 
-        if(isError(responseStatus.intValue())) {
+        if(instrumentation.isError(responseStatus.intValue())) {
           serverSpan.addError("error")
         }
 
