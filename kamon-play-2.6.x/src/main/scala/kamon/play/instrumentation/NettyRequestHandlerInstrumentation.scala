@@ -23,7 +23,7 @@ import kamon.trace.Span
 import kamon.util.CallingThreadExecutionContext
 import org.aspectj.lang.ProceedingJoinPoint
 import org.aspectj.lang.annotation._
-import play.api.mvc.EssentialFilter
+import play.api.mvc.{EssentialFilter, RequestHeader}
 
 import scala.concurrent.Future
 
@@ -32,15 +32,11 @@ class NettyRequestHandlerInstrumentation {
 
   private lazy val filter: EssentialFilter = new OperationNameFilter()
 
-  @Around("execution(* play.core.server.netty.PlayRequestHandler.handle(..)) && args(*, request)")
-  def onHandle(pjp: ProceedingJoinPoint, request: HttpRequest): Any = {
-    val incomingContext = instrumentationNetty.decodeContext(request)
+  private def span(pjp: ProceedingJoinPoint, method: String, route: String): Future[HttpResponse] = {
     val serverSpan = Kamon.buildSpan("http-request")
-      .asChildOf(incomingContext.get(Span.ContextKey))
       .withTag("span.kind", "server")
-      .withTag("component", "play.server.netty")
-      .withTag("http.method", request.method().name())
-      .withTag("http.url", request.uri())
+      .withTag("http.method", method)
+      .withTag("http.url", route)
       .start()
 
     Kamon.withContext(Context.create(Span.ContextKey, serverSpan)) {
@@ -50,7 +46,7 @@ class NettyRequestHandlerInstrumentation {
         val responseStatus = response.status()
         serverSpan.tagMetric("http.status_code", responseStatus.code().toString)
 
-        if(instrumentationNetty.isError(responseStatus.code))
+        if (instrumentationNetty.isError(responseStatus.code))
           serverSpan.addError(responseStatus.reasonPhrase())
 
         serverSpan.finish()
@@ -62,6 +58,29 @@ class NettyRequestHandlerInstrumentation {
         error
       }
     )(CallingThreadExecutionContext)
+  }
+
+  @Around("execution(* *(..))")
+  def onHandle2(pjp: ProceedingJoinPoint): Any = {
+    println(pjp.getSignature)
+    pjp.proceed()
+  }
+
+  @Around("execution(private * play.core.server.netty.PlayRequestHandler.handleAction(..))")
+  def onHandle(pjp: ProceedingJoinPoint): Any = {
+    println(pjp.proceed())
+  }
+
+  @Around("execution(private * play.core.server.netty.PlayRequestHandler.handleAction(..)) && args(*, requestHeader, request, *)")
+  def onHandle(pjp: ProceedingJoinPoint, requestHeader: RequestHeader, request: HttpRequest): Any = {
+    import play.api.routing.Router.Attrs.HandlerDef
+    println(requestHeader)
+    (for {
+      handlerDef <- requestHeader.attrs.get(HandlerDef)
+      method = handlerDef.method
+      routePattern = handlerDef.path
+      route = routePattern.replaceAll("<.*?>", "").replaceAll("\\$", ":")
+    } yield span(pjp, method, route)).getOrElse(pjp.proceed().asInstanceOf[Future[HttpResponse]])
   }
 
   @Around("call(* play.api.http.HttpFilters.filters(..))")
